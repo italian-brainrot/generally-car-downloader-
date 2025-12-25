@@ -15,8 +15,8 @@ def load_page(url):
     r.raise_for_status()
     return r.text
 
-def download_file(url, dir: str | os.PathLike, ext_blacklist=None):
-    r = requests.get(url, stream=True)
+def download_file(url, dir: str | os.PathLike, ext_blacklist=None, dl_dir: str | os.PathLike | None = None):
+    r = requests.get(url, stream=True, timeout=60)
     r.raise_for_status()
 
     fname = r.headers.get("Content-Disposition")
@@ -26,6 +26,9 @@ def download_file(url, dir: str | os.PathLike, ext_blacklist=None):
         if isinstance(ext_blacklist, str): ext_blacklist = (ext_blacklist, )
         if fname.strip().lower().endswith(tuple(ext_blacklist)):
             return None
+
+    if fname in os.listdir(dl_dir):
+        return None
 
     with open(os.path.join(dir, fname), 'wb') as f:
         shutil.copyfileobj(r.raw, f) # type:ignore
@@ -82,10 +85,10 @@ def unpack(file, dir):
 
 def get_car_trk_files(file: str | os.PathLike, download_path: str | os.PathLike) -> None:
     if str(file).lower().strip().endswith((".car", ".trk")):
-        print(f"saved {os.path.basename(file)}")
         if os.path.basename(file) in os.listdir(download_path):
             print(f"info: {os.path.basename(file)} already exists, skipping")
             return
+        print(f"saved {os.path.basename(file)}")
         shutil.move(file, os.path.join(download_path, os.path.basename(file)))
     else:
         try:
@@ -110,7 +113,12 @@ class GeneRallyCarDownloader:
         for dl_link in dl_links:
             if "&mode=view" in dl_link: continue
             with TemporaryDirectory() as tmpdir:
-                path = download_file(dl_link, tmpdir, _BLACKLIST)
+                try:
+                    path = download_file(dl_link, tmpdir, _BLACKLIST, self.download_path)
+                except Exception as e:
+                    print(f"EXCEPTION WHILE DOWNLOADING {dl_link}:\n{e.__class__.__name__}: {e}")
+                    continue
+
                 if path is not None:
                     get_car_trk_files(path, self.download_path)
 
@@ -123,11 +131,14 @@ class GeneRallyCarDownloader:
             topics = get_topics(current_html)
             for topic_url in topics:
                 topic_html = JustHTML(load_page(topic_url))
+                topic_page_idx = 1
                 while True:
                     self.scrap_page(topic_html)
                     next_url = get_next_page_url(topic_html)
                     if next_url is None: break
                     topic_html = JustHTML(load_page(next_url))
+                    topic_page_idx += 1
+                print(f'Processed {topic_page_idx} pages from {topic_url}')
 
             current_page_url = get_next_page_url(current_html)
             if current_page_url is None: break
